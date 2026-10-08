@@ -1,0 +1,6 @@
+.ipynb_checkpoints/
+__pycache__/
+.venv/
+.DS_Store
+# raw data is not committed; see README for the download link
+data/*.csv
