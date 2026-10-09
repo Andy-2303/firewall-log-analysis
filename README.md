@@ -13,14 +13,13 @@ Each row is a logged session with source/destination ports, action (allow, deny,
 4. Which sessions are outliers by size, and which allowed sessions are one-way?
 
 ## Key findings
-<!-- Fill in after running the notebook, using your actual results -->
-- 
-- 
-- 
+- Of 65,532 sessions, 42.6% were blocked (deny 22.9%, drop 19.6%); 57.4% were allowed.
+- SMB (port 445) was blocked 100% of the time and accounts for about 46% of all blocked sessions. Telnet (95.3%) and SSH (68.1%) were also heavily blocked.
+- Blocked sessions were tiny (about 70-83 bytes, one packet on average), consistent with connection attempts. Allowed traffic is highly skewed: median 422 bytes, but the largest session was about 1.27 GB.
 
 ## How to run
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Andy-2303/firewall-log-analysis.git
 cd firewall-log-analysis
 pip install -r requirements.txt
 # place log2.csv in data/
