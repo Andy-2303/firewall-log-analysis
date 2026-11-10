@@ -9,7 +9,7 @@ log = logging.getLogger("transform")
 
 DB_URL = "postgresql+psycopg2://fw_user:fw_pass@localhost:5432/firewall"
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
-SQL_FILES = ["02_staging.sql", "03_analytics.sql"]
+SQL_FILES = ["02_staging.sql", "03_analytics.sql", "04_readonly_user.sql"]
 VALID_ACTIONS = {"allow", "deny", "drop", "reset-both"}
 
 
