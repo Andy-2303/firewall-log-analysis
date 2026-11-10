@@ -1,32 +1,37 @@
 # Firewall Traffic Log Pipeline
 
-A containerised SQL pipeline that loads a public firewall session dataset into PostgreSQL, cleans it, builds analytics tables, and runs automated data quality checks. It started as a pandas notebook and was rebuilt as a repeatable pipeline.
+A containerised SQL pipeline that loads a public firewall session dataset into PostgreSQL, cleans it, builds analytics tables, runs automated data quality checks, and serves a dashboard on top. It started as a pandas notebook and was rebuilt as a repeatable pipeline.
 
 The analysis answers: how much traffic is allowed vs. blocked, which destination ports and services are blocked most, and which sessions look unusual.
+
+![Dashboard](docs/dashboard.png)
 
 ## Architecture
 
 ```
-log2.csv ──► raw.firewall_sessions ──► staging.firewall_sessions ──► analytics.*
- (CSV)        load_raw.py               02_staging.sql               03_analytics.sql
+log2.csv ──► raw.firewall_sessions ──► staging.firewall_sessions ──► analytics.* ──► Streamlit dashboard
+ (CSV)        load_raw.py               02_staging.sql               03_analytics.sql   (read-only user)
                                         (types, flags, service names) (summary tables)
                                                     │
                                                     └─► data quality checks (transform.py)
 ```
 
-| Layer     | Table                          | Purpose                                                                             |
-| --------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| raw       | `raw.firewall_sessions`        | Untouched copy of the CSV with cleaned column names                                 |
-| staging   | `staging.firewall_sessions`    | Typed columns, `is_blocked` flag, readable `service_name` (445 → SMB, 22 → SSH)     |
-| staging   | `staging.port_services`        | Lookup table of well-known ports                                                    |
-| analytics | `analytics.action_summary`     | Allowed vs. blocked share, average bytes and packets per action                     |
-| analytics | `analytics.block_rate_by_port` | Block rate per destination port (minimum 50 sessions)                               |
-| analytics | `analytics.outlier_sessions`   | Very large sessions (top 0.1% by bytes) and allowed sessions with no return traffic |
+| Layer | Table | Purpose |
+|---|---|---|
+| raw | `raw.firewall_sessions` | Untouched copy of the CSV with cleaned column names |
+| staging | `staging.firewall_sessions` | Typed columns, `is_blocked` flag, readable `service_name` (445 → SMB, 22 → SSH) |
+| staging | `staging.port_services` | Lookup table of well-known ports |
+| analytics | `analytics.action_summary` | Allowed vs. blocked share, average bytes and packets per action |
+| analytics | `analytics.block_rate_by_port` | Block rate per destination port (minimum 50 sessions) |
+| analytics | `analytics.outlier_sessions` | Very large sessions (top 0.1% by bytes) and allowed sessions with no return traffic |
+
+## Dashboard
+
+A Streamlit app (`dashboard/app.py`) reads the `analytics` tables and shows headline numbers (total sessions, share blocked, top blocked destination, flagged sessions), sessions by action, block rate and allowed-vs-blocked counts for the busiest ports, and a filterable table of unusual sessions. Sidebar filters set the minimum sessions per port and how many ports to show. If the database is down, it shows how to start it instead of crashing.
 
 ## Data quality checks
 
 `pipeline/transform.py` stops with an error if any of these fail:
-
 - staging has the same row count as raw
 - no null `destination_port` or `action`
 - every action is one of `allow`, `deny`, `drop`, `reset-both`
@@ -34,6 +39,12 @@ log2.csv ──► raw.firewall_sessions ──► staging.firewall_sessions ─
 - every analytics table is non-empty
 
 Each SQL file runs in a single transaction, and every table is dropped and rebuilt, so the pipeline can be re-run safely.
+
+## Access control and query guardrails
+
+The dashboard connects as a read-only database user (`sql/04_readonly_user.sql`) that can only `SELECT` from the `analytics` schema. It cannot read `raw` or `staging`, cannot write, and has a 5-second statement timeout.
+
+`assistant/safe_sql.py` is a validator built so that SQL written by an LLM could be run safely later: it allows only a single `SELECT` on the analytics schema, rejects comments, multiple statements and system catalogs, and caps the number of rows returned. It is covered by 20 automated tests (`python -m pytest assistant`), and `assistant/demo_guardrails.py` shows the validator and the database permissions each blocking unsafe queries.
 
 ## Dataset
 
@@ -65,12 +76,13 @@ pip install -r requirements.txt
 
 # download log2.csv into data/
 
-docker compose up -d              # start PostgreSQL
-python pipeline/load_raw.py       # load the CSV into raw.firewall_sessions
-python pipeline/transform.py      # build staging + analytics tables and run checks
+docker compose up -d                        # start PostgreSQL
+python pipeline/load_raw.py                 # load the CSV into raw.firewall_sessions
+python pipeline/transform.py                # build staging + analytics tables and run checks
+python -m streamlit run dashboard/app.py    # open the dashboard
 ```
 
-Then connect with any PostgreSQL client (for example DBeaver) and query the results:
+You can also connect with any PostgreSQL client (for example DBeaver) and query the results:
 
 - Host `localhost`, port `5432`, database `firewall`
 - User `fw_user`, password `fw_pass` (local practice credentials defined in `docker-compose.yml`)
@@ -79,9 +91,7 @@ Then connect with any PostgreSQL client (for example DBeaver) and query the resu
 SELECT * FROM analytics.block_rate_by_port ORDER BY sessions DESC LIMIT 15;
 ```
 
-`sql/01_first_queries.sql` has the first queries used to check the database against the original notebook.
-
-The original pandas analysis is still available in `firewall_log_analysis.ipynb`.
+`sql/01_first_queries.sql` has the first queries used to check the database against the original notebook. The original pandas analysis is still available in `firewall_log_analysis.ipynb`.
 
 ## Project structure
 
@@ -95,17 +105,22 @@ The original pandas analysis is still available in `firewall_log_analysis.ipynb`
 ├── sql/
 │   ├── 01_first_queries.sql     validation queries
 │   ├── 02_staging.sql           staging layer
-│   └── 03_analytics.sql         analytics layer
+│   ├── 03_analytics.sql         analytics layer
+│   └── 04_readonly_user.sql     read-only database user
+├── dashboard/
+│   └── app.py                   Streamlit dashboard
+├── assistant/                   SQL validator, tests and guardrail demo
+├── docs/                        dashboard screenshot
 └── firewall_log_analysis.ipynb  original exploratory analysis
 ```
 
 ## Tools
 
-Python, pandas, SQLAlchemy, PostgreSQL 16, SQL, Docker Compose, Jupyter, matplotlib, seaborn
+Python, pandas, SQLAlchemy, PostgreSQL 16, SQL, Docker Compose, Streamlit, Altair, pytest, Jupyter, matplotlib, seaborn
 
 ## Planned
 
-- Dashboard on top of the `analytics` tables
+- Natural-language question answering on top of the guardrails in `assistant/`
 - Enrichment from an external API (for example service or IP reputation lookups)
 - Scheduled runs with an orchestrator
 
